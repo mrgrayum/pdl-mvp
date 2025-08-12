@@ -1,44 +1,45 @@
+// app/events/[id]/page.tsx
 import { prisma } from "@/src/lib/prisma";
-import { getUser } from "@/src/lib/session";
+import { readUser, ensureUser } from "@/src/lib/session";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-async function upsertPick(data: FormData) {
+async function upsertPick(formData: FormData) {
   "use server";
-  const eventId = data.get("eventId") as string;
-  const division = data.get("division") as string;
-  const now = new Date();
+  const eventId = formData.get("eventId") as string;
+
   const event = await prisma.event.findUnique({ where: { id: eventId } });
   if (!event) throw new Error("Event not found");
-  if (now >= event.lockAt) throw new Error("Picks are locked.");
+  if (new Date() >= event.lockAt) throw new Error("Picks are locked.");
 
-  const user = await getUser();
+  // Create a user & set cookie here (this is a Server Action so it's allowed)
+  const user = await ensureUser();
 
   const entries = [
-    { category: "POP", playerId: data.get("MPO_POP") as string, division: "MPO" },
-    { category: "DROP", playerId: data.get("MPO_DROP") as string, division: "MPO" },
-    { category: "LOCK", playerId: data.get("MPO_LOCK") as string, division: "MPO" },
-    { category: "POP", playerId: data.get("FPO_POP") as string, division: "FPO" },
-    { category: "DROP", playerId: data.get("FPO_DROP") as string, division: "FPO" },
-    { category: "LOCK", playerId: data.get("FPO_LOCK") as string, division: "FPO" },
+    { division: "MPO", category: "POP",  playerId: formData.get("MPO_POP")  as string },
+    { division: "MPO", category: "DROP", playerId: formData.get("MPO_DROP") as string },
+    { division: "MPO", category: "LOCK", playerId: formData.get("MPO_LOCK") as string },
+    { division: "FPO", category: "POP",  playerId: formData.get("FPO_POP")  as string },
+    { division: "FPO", category: "DROP", playerId: formData.get("FPO_DROP") as string },
+    { division: "FPO", category: "LOCK", playerId: formData.get("FPO_LOCK") as string },
   ] as const;
 
-  // Validate eligibility + lock usage
   const season = await prisma.season.findFirst({ where: { isActive: true } });
   if (!season) throw new Error("Active season not found");
 
+  // Rule checks
   for (const e of entries) {
     if (!e.playerId) continue;
+
     if (e.category !== "LOCK") {
       const ps = await prisma.playerSeason.findFirst({
         where: { playerId: e.playerId, seasonId: season.id },
       });
-      if (!ps || !ps.averageFinish || ps.eventsPlayed < 3) {
+      if (!ps || ps.eventsPlayed < 3 || ps.averageFinish == null) {
         throw new Error("Pop/Drop players must have ≥3 events and an average set.");
       }
     } else {
-      // Lock usage cap
-      const count = await prisma.pick.count({
+      const used = await prisma.pick.count({
         where: {
           userId: user.id,
           category: "LOCK",
@@ -46,11 +47,13 @@ async function upsertPick(data: FormData) {
           event: { seasonId: season.id },
         },
       });
-      if (count >= 5) throw new Error("Lock usage cap reached (5 per season for the same player).");
+      if (used >= 5) {
+        throw new Error("Lock usage cap reached (5 per season for the same player).");
+      }
     }
   }
 
-  // Upsert per category
+  // Upsert the six picks
   for (const e of entries) {
     if (!e.playerId) continue;
     await prisma.pick.upsert({
@@ -72,27 +75,29 @@ async function upsertPick(data: FormData) {
       },
     });
   }
+
   redirect(`/leaderboard?event=${eventId}`);
 }
 
 export default async function EventDetail({ params }: { params: { id: string } }) {
   const event = await prisma.event.findUnique({ where: { id: params.id } });
-  if (!event) return <div>Event not found</div>;
-  const user = await getUser();
+  if (!event) return <div className="card">Event not found</div>;
 
-  const [mpo, fpo] = await Promise.all([
+  // Read user (no cookie writing during render)
+  const user = await readUser();
+
+  const [mpo, fpo, picks] = await Promise.all([
     prisma.player.findMany({ where: { division: "MPO" }, orderBy: { name: "asc" } }),
     prisma.player.findMany({ where: { division: "FPO" }, orderBy: { name: "asc" } }),
+    user
+      ? prisma.pick.findMany({ where: { userId: user.id, eventId: event.id } })
+      : Promise.resolve([] as any[]),
   ]);
 
-  const picks = await prisma.pick.findMany({
-    where: { userId: user.id, eventId: event.id },
-  });
-
   const getPick = (div: "MPO" | "FPO", cat: "POP" | "DROP" | "LOCK") =>
-    picks.find(p => p.division === div && p.category === cat)?.playerId ?? "";
+    picks.find((p) => p.division === div && p.category === cat)?.playerId ?? "";
 
-  const lockWarning = new Date() >= event.lockAt ? "Picks are locked for this event." : "";
+  const locked = new Date() >= event.lockAt;
 
   return (
     <div className="grid gap-6">
@@ -100,25 +105,37 @@ export default async function EventDetail({ params }: { params: { id: string } }
         <div>
           <h1 className="text-xl font-semibold">{event.name}</h1>
           <div className="text-sm text-gray-600">
-            Starts {new Date(event.startDate).toLocaleString()} • Lock {new Date(event.lockAt).toLocaleString()}
+            Starts {new Date(event.startDate).toLocaleString()} • Lock{" "}
+            {new Date(event.lockAt).toLocaleString()}
           </div>
         </div>
-        <Link className="btn" href={`/leaderboard?event=${event.id}`}>View Leaderboard</Link>
+        <Link className="btn" href={`/leaderboard?event=${event.id}`}>
+          View Leaderboard
+        </Link>
       </div>
 
-      {lockWarning && <div className="card text-red-600">{lockWarning}</div>}
+      {locked && <div className="card text-red-600">Picks are locked for this event.</div>}
 
       <form action={upsertPick} className="grid-2">
         <input type="hidden" name="eventId" value={event.id} />
 
         <div className="card">
           <h2 className="font-semibold mb-3">MPO Picks</h2>
-          {["POP","DROP","LOCK"].map((cat) => (
-            <div className="mb-3" key={cat}>
+          {["POP", "DROP", "LOCK"].map((cat) => (
+            <div className="mb-3" key={`MPO_${cat}`}>
               <label className="label">{cat}</label>
-              <select name={`MPO_${cat}`} className="select" defaultValue={getPick("MPO", cat as any)}>
+              <select
+                name={`MPO_${cat}`}
+                className="select"
+                defaultValue={getPick("MPO", cat as any)}
+                disabled={locked}
+              >
                 <option value="">— Select Player —</option>
-                {mpo.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {mpo.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
               </select>
             </div>
           ))}
@@ -126,22 +143,26 @@ export default async function EventDetail({ params }: { params: { id: string } }
 
         <div className="card">
           <h2 className="font-semibold mb-3">FPO Picks</h2>
-          {["POP","DROP","LOCK"].map((cat) => (
-            <div className="mb-3" key={cat}>
+          {["POP", "DROP", "LOCK"].map((cat) => (
+            <div className="mb-3" key={`FPO_${cat}`}>
               <label className="label">{cat}</label>
-              <select name={`FPO_${cat}`} className="select" defaultValue={getPick("FPO", cat as any)}>
+              <select
+                name={`FPO_${cat}`}
+                className="select"
+                defaultValue={getPick("FPO", cat as any)}
+                disabled={locked}
+              >
                 <option value="">— Select Player —</option>
-                {fpo.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {fpo.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
               </select>
             </div>
           ))}
         </div>
 
-        <div className="col-span-1 md:col-span-2 flex gap-3">
-          <button className="btn-primary" type="submit">Save Picks</button>
-          <a className="btn" href="/rules">View Rules</a>
-        </div>
-      </form>
-    </div>
-  );
-}
+        {!locked && (
+          <div className="col-span-1 md:col-span-2 flex gap-3">
+            <button className="btn-primary" type="submi
