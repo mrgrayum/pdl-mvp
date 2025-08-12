@@ -12,7 +12,7 @@ async function upsertPick(formData: FormData) {
   if (!event) throw new Error("Event not found");
   if (new Date() >= event.lockAt) throw new Error("Picks are locked.");
 
-  // Create a user & set cookie here (this is a Server Action so it's allowed)
+  // ✔️ Cookie is set here (allowed — this is a Server Action)
   const user = await ensureUser();
 
   const entries = [
@@ -47,13 +47,11 @@ async function upsertPick(formData: FormData) {
           event: { seasonId: season.id },
         },
       });
-      if (used >= 5) {
-        throw new Error("Lock usage cap reached (5 per season for the same player).");
-      }
+      if (used >= 5) throw new Error("Lock usage cap reached (5 per season for the same player).");
     }
   }
 
-  // Upsert the six picks
+  // Upsert picks
   for (const e of entries) {
     if (!e.playerId) continue;
     await prisma.pick.upsert({
@@ -83,7 +81,7 @@ export default async function EventDetail({ params }: { params: { id: string } }
   const event = await prisma.event.findUnique({ where: { id: params.id } });
   if (!event) return <div className="card">Event not found</div>;
 
-  // Read user (no cookie writing during render)
+  // ❗️Do NOT set cookies here. Only read.
   const user = await readUser();
 
   const [mpo, fpo, picks] = await Promise.all([
@@ -165,4 +163,11 @@ export default async function EventDetail({ params }: { params: { id: string } }
 
         {!locked && (
           <div className="col-span-1 md:col-span-2 flex gap-3">
-            <button className="btn-primary" type="submi
+            <button className="btn-primary" type="submit">Save Picks</button>
+            <a className="btn" href="/rules">View Rules</a>
+          </div>
+        )}
+      </form>
+    </div>
+  );
+}
