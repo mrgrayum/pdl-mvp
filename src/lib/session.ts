@@ -2,16 +2,15 @@
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
 
-// Read the user if the cookie already exists (SAFE in Server Components)
+// SAFE to call during page render: just reads cookie if it exists.
 export async function readUser() {
   const uid = cookies().get("pdl_uid")?.value;
   if (!uid) return null;
   return prisma.user.findUnique({ where: { id: uid } });
 }
 
-// Create a user and SET cookie (MUST be called from a Server Action or Route)
+// Call this INSIDE a Server Action to create user & set cookie.
 export async function ensureUser() {
-  "use server";
   const jar = cookies();
   let uid = jar.get("pdl_uid")?.value;
 
