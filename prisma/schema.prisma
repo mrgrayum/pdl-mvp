@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Division {
+  MPO
+  FPO
+}
+
+enum Category {
+  POP
+  DROP
+  LOCK
+}
+
+enum ScoreScope {
+  FINAL
+  ROUND
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  name      String?
+  createdAt DateTime @default(now())
+  picks     Pick[]
+}
+
+model Season {
+  id        String   @id @default(cuid())
+  year      Int
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(false)
+  events    Event[]
+  playerSeasons PlayerSeason[]
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  seasonId  String
+  name      String
+  venue     String?
+  city      String?
+  startDate DateTime
+  endDate   DateTime
+  lockAt    DateTime
+  notes     String?
+  season    Season   @relation(fields: [seasonId], references: [id])
+  results   EventResult[]
+  picks     Pick[]
+}
+
+model Player {
+  id         String    @id @default(cuid())
+  name       String
+  pdgaNumber Int?
+  division   Division
+  country    String?
+  seasons    PlayerSeason[]
+  results    EventResult[]
+}
+
+model PlayerSeason {
+  id            String   @id @default(cuid())
+  playerId      String
+  seasonId      String
+  division      Division
+  eventsPlayed  Int      @default(0)
+  averageFinish Float?
+  lastUpdated   DateTime @default(now())
+  player        Player   @relation(fields: [playerId], references: [id])
+  season        Season   @relation(fields: [seasonId], references: [id])
+  @@unique([playerId, seasonId])
+}
+
+model EventResult {
+  id         String   @id @default(cuid())
+  eventId    String
+  playerId   String
+  division   Division
+  finalPlace Int?
+  dnf        Boolean  @default(false)
+  rounds     Json?
+  event      Event    @relation(fields: [eventId], references: [id])
+  player     Player   @relation(fields: [playerId], references: [id])
+  @@unique([eventId, playerId])
+}
+
+model Pick {
+  id        String   @id @default(cuid())
+  userId    String
+  eventId   String
+  division  Division
+  category  Category
+  playerId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  event     Event    @relation(fields: [eventId], references: [id])
+  player    Player   @relation(fields: [playerId], references: [id])
+  scores    PickScore[]
+  @@unique([userId, eventId, division, category])
+}
+
+model PickScore {
+  id          String     @id @default(cuid())
+  pickId      String
+  scope       ScoreScope
+  roundNumber Int?
+  points      Int
+  reason      String?
+  createdAt   DateTime @default(now())
+  pick        Pick       @relation(fields: [pickId], references: [id])
+}
