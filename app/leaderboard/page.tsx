@@ -21,7 +21,7 @@ export default async function Leaderboard({ searchParams }: { searchParams: { ev
     const key = p.userId;
     const totalPoints = sum(p.scores.map(s => s.points));
     const bucket = `${p.division}/${p.category}`;
-    if (!byUser.has(key)) byUser.set(key, { name: p.user.name ?? p.user.id[:6], total: 0, breakdown: {} as any });
+    if (!byUser.has(key)) byUser.set(key, { name: p.user.name ?? p.user.id.slice(0, 6), total: 0, breakdown: {} as any });
     const row = byUser.get(key)!;
     row.total += totalPoints;
     row.breakdown[bucket] = (row.breakdown[bucket] ?? 0) + totalPoints;
